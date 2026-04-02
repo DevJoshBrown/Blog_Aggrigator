@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -39,6 +42,22 @@ func (c *commands) register(name string, f func(*state, command) error) {
 type command struct {
 	name string
 	args []string
+}
+
+type RSSFeed struct {
+	Channel struct {
+		Title       string    `xml:"title"`
+		Link        string    `xml:"link"`
+		Description string    `xml:"description"`
+		Item        []RSSItem `xml:"item"`
+	} `xml:"channel"`
+}
+
+type RSSItem struct {
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	PubDate     string `xml:"pubDate"`
 }
 
 func handlerLogin(s *state, cmd command) error {
@@ -113,6 +132,34 @@ func handlerGetUsers(s *state, cmd command) error {
 		}
 	}
 	return nil
+}
+
+func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
+	request, err := http.NewRequestWithContext(ctx, "GET", feedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate the feed request %w", err)
+	}
+
+	request.Header.Set("User-Agent", "gator")
+
+	client := http.Client{}
+	resp, err := client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send the feed request %w", err)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to read response body : %w", err)
+	}
+
+	var feed RSSFeed
+	err = xml.Unmarshal(data, &feed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal xml file %w", err)
+	}
+
+	return &feed, nil
 }
 
 /*
