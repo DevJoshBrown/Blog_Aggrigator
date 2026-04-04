@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -108,6 +109,77 @@ func handlerRegister(s *state, cmd command) error {
 	return nil
 }
 
+func addfeed(s *state, cmd command) error {
+	if len(cmd.args) != 2 {
+		return fmt.Errorf("Error: must pass exactly 2 args")
+	}
+	currentUser, err := s.db.GetUser(context.Background(), s.cfg.User)
+	if err != nil {
+		return fmt.Errorf("Error completing GetUser in addfeed() %w", err)
+	}
+
+	feed, err := s.db.CreateFeed(context.Background(), database.CreateFeedParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Name:      cmd.args[0],
+		Url:       cmd.args[1],
+		UserID:    currentUser.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("could not create feed: %w", err)
+	}
+	fmt.Printf("%v\n", feed)
+
+	return nil
+
+}
+
+func handlerFeeds(s *state, cmd command) error {
+	if len(cmd.args) > 0 {
+		return fmt.Errorf("Error: Feeds command takes 0 arguments")
+	}
+
+	feeds, err := s.db.GetFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get feeds : %w", err)
+	}
+
+	for _, feed := range feeds {
+		fmt.Println(feed.Name)
+		fmt.Println(feed.Url)
+		fmt.Println(feed.UserName)
+	}
+	return nil
+}
+
+func handlerFollow(s *state, cmd command) error {
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("Follow must have only 1 argument - url")
+	}
+
+	user, err := s.db.GetUser(context.Background(), s.cfg.User)
+	if err != nil {
+		return fmt.Errorf("failed to Get User in handlerFollow: %w", err)
+	}
+
+	feed, err := s.db.GetFeedByURL(context.Background(), cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("GetFeedByURL failed in handler Follow : %w", err)
+	}
+	followers, err := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    user.ID,
+		FeedID:    feed.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to CreateFeedFollow: %w", err)
+	}
+	fmt.Println(followers)
+	return nil
+}
 func handlerReset(s *state, cmd command) error {
 
 	err := s.db.Reset(context.Background())
@@ -131,6 +203,16 @@ func handlerGetUsers(s *state, cmd command) error {
 			fmt.Printf("%v\n", user.Name)
 		}
 	}
+	return nil
+}
+
+func handlerAgg(s *state, cmd command) error {
+	index := "https://www.wagslane.dev/index.xml"
+	feed, err := fetchFeed(context.Background(), index)
+	if err != nil {
+		return fmt.Errorf("failed to fetch feed at wags/index")
+	}
+	fmt.Println(feed)
 	return nil
 }
 
@@ -159,6 +241,13 @@ func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 		return nil, fmt.Errorf("failed to unmarshal xml file %w", err)
 	}
 
+	feed.Channel.Title = html.UnescapeString(feed.Channel.Title)
+	feed.Channel.Description = html.UnescapeString(feed.Channel.Description)
+
+	for i, item := range feed.Channel.Item {
+		feed.Channel.Item[i].Title = html.UnescapeString(item.Title)
+		feed.Channel.Item[i].Description = html.UnescapeString(item.Description)
+	}
 	return &feed, nil
 }
 
@@ -201,6 +290,9 @@ func main() {
 	c.register("register", handlerRegister)
 	c.register("reset", handlerReset)
 	c.register("users", handlerGetUsers)
+	c.register("agg", handlerAgg)
+	c.register("addfeed", addfeed)
+	c.register("feeds", handlerFeeds)
 
 	/* Look at what the user typed (os.Args) */
 	a := os.Args
