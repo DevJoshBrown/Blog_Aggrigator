@@ -217,12 +217,20 @@ func handlerGetFollowers(s *state, cmd command, user database.User) error {
 
 }
 func handlerAgg(s *state, cmd command) error {
-	index := "https://www.wagslane.dev/index.xml"
-	feed, err := fetchFeed(context.Background(), index)
-	if err != nil {
-		return fmt.Errorf("failed to fetch feed at wags/index")
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("Agg should accept only one argument, a duration.")
 	}
-	fmt.Println(feed)
+	duration, err := time.ParseDuration(cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse duration: %w", err)
+	}
+
+	fmt.Printf("Collecting feeds every %v.", duration)
+
+	ticker := time.NewTicker(duration)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+	}
 	return nil
 }
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
@@ -288,13 +296,25 @@ func middlewareLoggedIn(handler func(s *state, cmd command, user database.User) 
 		return handler(s, cmd, user)
 	}
 }
+func scrapeFeeds(s *state) error {
+	feed, err := s.db.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return fmt.Errorf("Failed to get next feed: %w", err)
+	}
 
-/*
-Terminal:  go run . register lane
+	s.db.MarkFeedFetched(context.Background(), feed.ID)
 
-	   ↑         ↑
-	command     argument
-*/
+	fetchedFeed, err := fetchFeed(context.Background(), feed.Url)
+	if err != nil {
+		return fmt.Errorf("failed to fetchFeed in scrapeFeeds: %w", err)
+	}
+
+	for _, item := range fetchedFeed.Channel.Item {
+		fmt.Println(item.Title)
+	}
+	return nil
+}
+
 func main() {
 
 	/*2.  Read config from ~/.gatorconfig.json */
