@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -231,7 +233,7 @@ func handlerAgg(s *state, cmd command) error {
 	for ; ; <-ticker.C {
 		scrapeFeeds(s)
 	}
-	return nil
+
 }
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 	request, err := http.NewRequestWithContext(ctx, "GET", feedURL, nil)
@@ -310,7 +312,58 @@ func scrapeFeeds(s *state) error {
 	}
 
 	for _, item := range fetchedFeed.Channel.Item {
-		fmt.Println(item.Title)
+		parsedTime, err := time.Parse(time.RFC1123Z, item.PubDate)
+		publishedAt := sql.NullTime{}
+
+		if err != nil {
+			parsedTime, err = time.Parse(time.RFC1123, item.PubDate)
+			publishedAt = sql.NullTime{Valid: false}
+		}
+		if err == nil {
+			publishedAt = sql.NullTime{Time: parsedTime, Valid: true}
+		}
+
+		_, err = s.db.CreatePost(context.Background(), database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+			Title:       sql.NullString{String: item.Title, Valid: item.Title != ""},
+			Url:         item.Link,
+			Description: sql.NullString{String: item.Description, Valid: item.Description != ""},
+			PublishedAt: publishedAt,
+			FeedID:      feed.ID,
+		})
+
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate key") {
+				continue
+			}
+			log.Printf("couldn't create post: %v", err)
+		}
+	}
+	return nil
+}
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	limit := 2
+	if len(cmd.args) > 0 {
+		parsedLimit, err := strconv.Atoi(cmd.args[0])
+		if err != nil {
+			return fmt.Errorf("failed to convert argument to integer: %w", err)
+		}
+		limit = parsedLimit
+	}
+
+	posts, err := s.db.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get posts for user: %w", err)
+	}
+	for _, post := range posts {
+		fmt.Println(post.Title.String)
+		fmt.Println(post.Url)
+		fmt.Println("---")
 	}
 	return nil
 }
@@ -354,6 +407,7 @@ func main() {
 	c.register("following", middlewareLoggedIn(handlerGetFollowers))
 	c.register("follow", middlewareLoggedIn(handlerFollow))
 	c.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	c.register("browse", middlewareLoggedIn((handlerBrowse)))
 
 	/* Look at what the user typed (os.Args) */
 	a := os.Args

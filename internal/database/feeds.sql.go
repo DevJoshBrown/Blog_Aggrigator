@@ -243,8 +243,8 @@ func (q *Queries) GetNextFeedToFetch(ctx context.Context) (Feed, error) {
 
 const markFeedFetched = `-- name: MarkFeedFetched :exec
 UPDATE feeds
-SET last_fetched_at = NOW(), updated_at = NOW()
-WHERE id = $1
+    SET last_fetched_at = NOW(), updated_at = NOW()
+    WHERE id = $1
 `
 
 func (q *Queries) MarkFeedFetched(ctx context.Context, id uuid.UUID) error {
